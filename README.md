@@ -23,6 +23,16 @@ Cron: `* * * * * cd /path/to/numwatch && ./numwatch.py tick >> tick.log 2>&1`
 
 Slack: put webhook URLs in `~/.config/numwatch/notify.toml` (`chmod 600`) under `[slack]`, keyed by the `notify` alias in `numwatch.toml`, or export `NUMWATCH_SLACK_WEBHOOK`. Never commit a webhook.
 
+## Dogfood locally (no secrets)
+
+`examples/` ships a stdlib fake metric service plus a mock Slack receiver with a scripted breach/recovery timeline.
+
+```
+./examples/dogfood.sh 300     # 5-minute run, prints GATE3 DOGFOOD: PASS|FAIL
+```
+
+See [examples/README.md](examples/README.md) for the expected event timeline.
+
 ## Develop
 
 ```

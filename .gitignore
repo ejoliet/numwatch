@@ -5,3 +5,4 @@ status.html.tmp
 tick.log
 .omc/
 .claude/
+examples/.dogfood/

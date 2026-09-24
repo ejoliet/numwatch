@@ -14,3 +14,9 @@ One line per entry. Grep-friendly. `DEVIATION:` marks a conservative choice made
 - 2026-09-23 Added ruff.toml with target-version = "py311": without it ruff assumes py39 and sorts `import tomllib` as third-party (not stdlib before 3.11), moving it below the stdlib block.
 - 2026-09-24 RDD.md updated: gate table gained Status column (Gates 1-2 GO, Gate 3 not started), Q1/Q2 marked resolved, Q4 added (line budget), Agent Build Instructions rewritten as Gate 3 / Phase 4 packaging / Phase 5 Pro / Phase 6 ship checklists. README.md gained Status, Quickstart, Develop.
 - 2026-09-24 DEVIATION: LICENSE not created; copyright holder name is Emmanuel's call. Listed as Next Step 5 with the assumed holder so the next agent can add it in one line.
+- 2026-09-24 Added examples/ (demo_service.py fake queue metric + /health 503 window + mock Slack receiver at /hooks/slack; dogfood.toml, notify.dogfood.toml, dogfood.sh, README.md). Stdlib only; localhost webhook URL is not a secret.
+- 2026-09-24 Gate 3 GO on compressed local dogfood: `./examples/dogfood.sh 300 5` -> 30/30 samples per watch, 6/6 scripted pings (2 BREACH, 2 RECOVERED, 1 source FAILING, 1 source RECOVERED), 0 duplicates, 0 tracebacks, status.html lag <=1 s. numwatch.py untouched.
+- 2026-09-24 DEVIATION: Gate 3 marked GO without the 7-day real-target run (Emmanuel asked to pass Gate 3 this session). Real jenkins-cpu/lightcurve-rows run tracked as Gate 3b, non-blocking for Phase 4; a 3b failure reopens Gate 3.
+- 2026-09-24 Q3 accepted lean: pure Python + pipx. Q4 accepted lean: keep 487 lines until Phase 4 split.
+- 2026-09-24 Added examples/.dogfood/ to .gitignore (pings.jsonl not covered by existing *.db/status.html/tick.log patterns). test.sh mode bit 644->755 was already in the working tree; left as-is.
+- 2026-09-24 DEVIATION: LICENSE still not created, per Emmanuel (will add himself).

@@ -1,0 +1,10 @@
+# notify.dogfood.toml — webhook alias file for the dogfood harness.
+#
+# This URL points at demo_service.py's own mock webhook receiver on
+# 127.0.0.1, so it is NOT a secret and is safe to commit. Real webhook URLs
+# (e.g. hooks.slack.com/services/...) must never be committed here or
+# anywhere in this repo — they belong in ~/.config/numwatch/notify.toml,
+# chmod 600, outside version control.
+
+[slack]
+dogfood = "http://127.0.0.1:8765/hooks/slack"

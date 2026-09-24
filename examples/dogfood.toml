@@ -1,0 +1,27 @@
+# dogfood.toml — numwatch config pointed at examples/demo_service.py.
+#
+# Local stand-in for the real jenkins-cpu / lightcurve-rows watches so Gate 3's
+# dogfood harness can exercise the full sample -> alert -> notify -> render
+# loop without secrets or a real Jenkins/DuckDB target. See examples/README.md.
+#
+# Expected timeline for a 300s run (see demo_service.py /timeline):
+#   demo-queue-depth: BREACH at t~=63 (3 samples > 80), RECOVERED at t~=123
+#                      second BREACH at t~=213, second RECOVERED at t~=243
+#   demo-health:       FAILING at t~=153 (3 consecutive curl failures),
+#                      RECOVERED at t~=193
+
+[watch.demo-queue-depth]
+source   = "shell"
+cmd      = "curl -sf http://127.0.0.1:8765/metrics"
+every    = "10s"
+alert_if = "> 80 for 3"
+notify   = "dogfood"
+unit     = ""
+
+[watch.demo-health]
+source   = "shell"
+cmd      = "curl -sf http://127.0.0.1:8765/health"
+every    = "10s"
+alert_if = "< 1 for 1"
+notify   = "dogfood"
+unit     = ""
