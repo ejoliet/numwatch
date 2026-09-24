@@ -17,9 +17,9 @@ import subprocess
 import sys
 import tomllib
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 DEFAULT_CONFIG = Path(os.environ.get("NUMWATCH_CONFIG", "numwatch.toml"))
 DEFAULT_DB = Path(os.environ.get("NUMWATCH_DB", "numwatch.db"))
@@ -78,7 +78,7 @@ def parse_rule(s: str) -> Rule:
     raise ConfigError(f"unrecognized rule: {s!r}")
 
 
-def rule_matches(rule: Rule, value: Optional[float]) -> bool:
+def rule_matches(rule: Rule, value: float | None) -> bool:
     # AIDEV-note: a None value (source error) never matches a threshold rule.
     # Error detection is a separate track (see step_state on error_state).
     if value is None:
@@ -94,7 +94,7 @@ def rule_matches(rule: Rule, value: Optional[float]) -> bool:
 
 # ------------------------------------------------------------ state machine --
 
-def step_state(state: str, streak: int, matched: bool, n: int) -> tuple[str, int, Optional[str]]:
+def step_state(state: str, streak: int, matched: bool, n: int) -> tuple[str, int, str | None]:
     """One dedup'd transition step. Returns (new_state, new_streak, transition).
 
     transition is None, 'breach' (fires once entering 'firing'), or
@@ -120,7 +120,7 @@ def step_state(state: str, streak: int, matched: bool, n: int) -> tuple[str, int
 def run_shell(cmd: str, timeout: int = 30) -> float:
     try:
         proc = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired as e:
         raise SourceError(f"timed out after {timeout}s") from e
@@ -148,7 +148,7 @@ def notify(webhook_url: str, text: str, http_post: Callable[[str, bytes], None] 
         print(f"numwatch: notify failed: {e}", file=sys.stderr)
 
 
-def resolve_webhook(alias: Optional[str], notify_map: dict) -> Optional[str]:
+def resolve_webhook(alias: str | None, notify_map: dict) -> str | None:
     env = os.environ.get("NUMWATCH_SLACK_WEBHOOK")
     if env:
         return env
@@ -166,7 +166,7 @@ class Watch:
     cmd: str
     every: int
     rule: Rule
-    notify_alias: Optional[str]
+    notify_alias: str | None
     unit: str
 
 
@@ -230,14 +230,14 @@ def init_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def last_sample_ts(conn: sqlite3.Connection, watch: str) -> Optional[int]:
+def last_sample_ts(conn: sqlite3.Connection, watch: str) -> int | None:
     row = conn.execute(
         "SELECT MAX(ts) FROM samples WHERE watch = ?", (watch,)
     ).fetchone()
     return row[0] if row and row[0] is not None else None
 
 
-def insert_sample(conn: sqlite3.Connection, watch: str, ts: int, value: Optional[float], error: Optional[str]) -> None:
+def insert_sample(conn: sqlite3.Connection, watch: str, ts: int, value: float | None, error: str | None) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO samples (watch, ts, value, error) VALUES (?, ?, ?, ?)",
         (watch, ts, value, error),
@@ -245,7 +245,7 @@ def insert_sample(conn: sqlite3.Connection, watch: str, ts: int, value: Optional
     conn.commit()
 
 
-def recent_samples(conn: sqlite3.Connection, watch: str, limit: int = 90) -> list[tuple[int, Optional[float]]]:
+def recent_samples(conn: sqlite3.Connection, watch: str, limit: int = 90) -> list[tuple[int, float | None]]:
     rows = conn.execute(
         "SELECT ts, value FROM samples WHERE watch = ? ORDER BY ts DESC LIMIT ?",
         (watch, limit),
@@ -325,7 +325,7 @@ def sample_watch(conn: sqlite3.Connection, w: Watch, notify_map: dict, now: int)
     prune(conn, w.name)
 
 
-def tick(config_path: Path, db_path: Path, notify_path: Path, page_path: Path, force: Optional[str] = None) -> None:
+def tick(config_path: Path, db_path: Path, notify_path: Path, page_path: Path, force: str | None = None) -> None:
     watches = load_config(config_path)
     notify_map = load_notify_map(notify_path)
     conn = init_db(db_path)
@@ -344,7 +344,7 @@ def tick(config_path: Path, db_path: Path, notify_path: Path, page_path: Path, f
 
 # ------------------------------------------------------------------- page --
 
-def _sparkline_svg(samples: list[tuple[int, Optional[float]]], w: int = 300, h: int = 60) -> str:
+def _sparkline_svg(samples: list[tuple[int, float | None]], w: int = 300, h: int = 60) -> str:
     vals = [v for _, v in samples if v is not None]
     if not vals:
         return f'<svg viewBox="0 0 {w} {h}"><text x="4" y="{h//2}" font-size="10" fill="#888">no data</text></svg>'
@@ -370,7 +370,7 @@ def render_page(conn: sqlite3.Connection, watches: dict[str, Watch], page_path: 
     for name, w in watches.items():
         samples = recent_samples(conn, name)
         last_val = samples[-1][1] if samples else None
-        state, streak, error_state, error_streak = get_alert_row(conn, name)
+        state, _, error_state, _ = get_alert_row(conn, name)
         badge = "FIRING" if state == "firing" else ("ERROR" if error_state == "firing" else "ok")
         cards.append(
             f'<div class="card"><h2>{name}</h2>'
@@ -398,7 +398,7 @@ def render_page(conn: sqlite3.Connection, watches: dict[str, Watch], page_path: 
 _BLOCKS = "▁▂▃▄▅▆▇█"
 
 
-def _sparkline_text(samples: list[tuple[int, Optional[float]]]) -> str:
+def _sparkline_text(samples: list[tuple[int, float | None]]) -> str:
     vals = [v for _, v in samples if v is not None]
     if not vals:
         return "no data"

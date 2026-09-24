@@ -16,7 +16,6 @@ from numwatch import (
     step_state,
 )
 
-
 # ---------------------------------------------------------- parse_duration --
 
 @pytest.mark.parametrize(
@@ -82,7 +81,7 @@ def test_rule_matches_lt_and_gte_lte():
 # --------------------------------------------------------------- step_state --
 
 def test_step_state_immediate_fire_when_n_is_1():
-    state, streak, transition = step_state("ok", 0, matched=True, n=1)
+    state, _, transition = step_state("ok", 0, matched=True, n=1)
     assert (state, transition) == ("firing", "breach")
 
 
@@ -110,7 +109,7 @@ def test_step_state_recovery_fires_once_leaving_firing():
 
 
 def test_step_state_no_repeat_recovery_once_ok():
-    state, streak, transition = step_state("ok", 0, matched=False, n=3)
+    state, _, transition = step_state("ok", 0, matched=False, n=3)
     assert (state, transition) == ("ok", None)
 
 
@@ -142,3 +141,23 @@ def test_notify_swallows_failure_and_does_not_raise(capsys):
     notify("https://hooks.slack.com/fake", "hello", http_post=failing_post)
     err = capsys.readouterr().err
     assert "notify failed" in err
+
+
+# -------------------------------------------------------- sample_watch e2e --
+
+def test_sample_watch_breach_and_recovery_ping_exactly_once(monkeypatch, tmp_path):
+    import numwatch
+
+    posts: list[str] = []
+    monkeypatch.setattr(numwatch, "notify", lambda url, text: posts.append(text))
+    monkeypatch.setenv("NUMWATCH_SLACK_WEBHOOK", "https://hooks.slack.com/fake")
+    values = iter([90, 90, 90, 90, 90, 10, 10])
+    monkeypatch.setattr(numwatch, "run_shell", lambda cmd, timeout=30: float(next(values)))
+
+    conn = numwatch.init_db(tmp_path / "t.db")
+    w = numwatch.Watch("w", "shell", "x", 1, numwatch.parse_rule("> 85 for 3"), None, "")
+    for ts in range(7):
+        numwatch.sample_watch(conn, w, {}, ts)
+
+    assert len(posts) == 2
+    assert "BREACH" in posts[0] and "RECOVERED" in posts[1]

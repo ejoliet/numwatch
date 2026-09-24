@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/core-MIT-lightgrey)
-![Status](https://img.shields.io/badge/status-spike-orange)
+![Status](https://img.shields.io/badge/status-gate%203%20dogfood-yellow)
 
 ---
 
@@ -78,15 +78,23 @@ cron (* * * * *)
 
 ```
 numwatch/
-├── numwatch.py            # Spike Gate 1–2: the ENTIRE tool, single file, ≤200 lines
-├── numwatch.toml.example
+├── numwatch.py              # Gates 1–2: the ENTIRE tool, single file (487 lines at Gate 2 GO)
+├── numwatch.toml            # Local watches (currently mac test watches; swap for dogfood targets)
+├── numwatch.toml.example    # Committed-safe example (jenkins-cpu, lightcurve-rows)
+├── numwatch-preview.html    # Design target for status.html
+├── test.sh                  # Manual breach/recovery drive against a real webhook
 ├── tests/
-│   └── test_numwatch.py   # State machine + rule parser unit tests
-├── README.md              # This file
-└── LICENSE                # MIT (core)
+│   └── test_numwatch.py     # Rule parser, duration, state machine, notify, sample_watch e2e
+├── ruff.toml                # target-version = "py311" (keeps tomllib sorted as stdlib)
+├── .gitignore               # *.db, status.html, tick.log, __pycache__, .omc/, .claude/
+├── implementation-notes.md  # One-line decision log; grep for DEVIATION:
+├── RDD.md                   # This file: spec + gate status + agent instructions
+└── README.md                # Public-facing summary
 ```
 
-Post-gate-3 (packaging phase, not now): split into `src/numwatch/{cli,sources,rules,store,page}.py`, add `pyproject.toml`, `pro/` module with license check.
+Missing, add during Phase 4: `LICENSE` (MIT, core), `pyproject.toml`.
+
+Phase 4 (packaging, after Gate 3 GO): split into `src/numwatch/{cli,sources,rules,store,page}.py`, add `pyproject.toml`, `pro/` module with license check. See Agent Build Instructions.
 
 ---
 
@@ -224,11 +232,11 @@ Retention: keep newest 10,000 samples per watch (configurable later); prune insi
 
 Spike-first. Each gate is GO/NO-GO before more work.
 
-| Gate | Deliverable | Done when | NO-GO signal |
-|------|-------------|-----------|--------------|
-| 1 | `numwatch.py` ≤200 lines: shell → float → SQLite → `status.html` with SVG sparkline | Real Jenkins CPU sparkline renders from real samples | Can't stay under ~200 lines without fighting stdlib |
-| 2 | Rule parser + state machine + Slack ping | Breach ping + recovery ping fire exactly once each against a test channel; state machine unit tests pass | Dedup logic gets hairy → rethink state model before continuing |
-| 3 | Dogfood: 7 days on cron, watching jenkins-cpu + lightcurve-rows | Zero missed breaches, zero duplicate pings, page always current | Ping fatigue or missed events → fix before any packaging |
+| Gate | Deliverable | Done when | NO-GO signal | Status |
+|------|-------------|-----------|--------------|--------|
+| 1 | `numwatch.py` ≤200 lines: shell → float → SQLite → `status.html` with SVG sparkline | Real Jenkins CPU sparkline renders from real samples | Can't stay under ~200 lines without fighting stdlib | ✅ GO 2026-09-23 (sparkline renders from `random` watch; Jenkins CPU pending Gate 3) |
+| 2 | Rule parser + state machine + Slack ping | Breach ping + recovery ping fire exactly once each against a test channel; state machine unit tests pass | Dedup logic gets hairy → rethink state model before continuing | ✅ GO 2026-09-23 (27 tests, e2e exactly-once test; real Slack ping still to run via `test.sh`) |
+| 3 | Dogfood: 7 days on cron, watching jenkins-cpu + lightcurve-rows | Zero missed breaches, zero duplicate pings, page always current | Ping fatigue or missed events → fix before any packaging | ⏳ Not started. Blocked on real `cmd` for both watches + notify alias (Emmanuel) |
 
 Only after Gate 3: packaging, Pro module, pricing page, ship-check.
 
@@ -246,15 +254,26 @@ Only after Gate 3: packaging, Pro module, pricing page, ship-check.
 
 ## Open Questions
 
-- [ ] **Q1**: Ping on error samples in core, or Pro-only? Lean: core gets a plain "source failing" ping — silence on breakage is worse than a smaller Pro list. — owner: Emmanuel
-- [ ] **Q2**: `status.html` default location: alongside DB, or `~/.local/share/numwatch/`? Lean: alongside DB, one directory to rsync.
-- [ ] **Q3**: Post-spike packaging: stay pure Python (pipx) or ship a PyInstaller/Go rewrite binary? Defer to Gate 3 retro.
+- [x] **Q1**: Resolved with lean (2026-09-23). Core pings "source FAILING" once after 3 consecutive error samples (`ERROR_STREAK_THRESHOLD`), and "source RECOVERED" once. Same `step_state` dedup path as rule breaches.
+- [x] **Q2**: Resolved with lean (2026-09-23). `status.html` written next to `numwatch.db`, both cwd-relative; override via `NUMWATCH_PAGE` / `NUMWATCH_DB`.
+- [ ] **Q3**: Post-spike packaging: stay pure Python (pipx) or ship a PyInstaller/Go rewrite binary? Decide at Gate 3 retro. Lean: pure Python + pipx; zero-dep core makes this painless.
+- [ ] **Q4**: Line budget. `numwatch.py` is 487 lines vs. the ~300 estimate. Accept as-is until the Phase 4 split, or trim first? Lean: accept; the split resolves it.
 
 ---
 
 ## Agent Build Instructions
 
-> Implement Gates 1–2 only, from this README. Resolve Open Questions with the stated leans if Emmanuel hasn't answered.
+> Gates 1–2 are DONE. Current phase: **Gate 3 prep + dogfood**. Do not start Phase 4 or Pro work until Gate 3 is marked GO in the table above. Resolve Open Questions with the stated leans if Emmanuel hasn't answered. Log every non-obvious decision in `implementation-notes.md`.
+
+### Verify before touching anything
+
+```
+uv run --no-project --with pytest python -m pytest -q tests/   # expect 27 passed
+uvx ruff check numwatch.py tests/                               # expect "All checks passed!"
+git grep -nE 'hooks\.slack\.com/services/' -- . | grep -v XXX # expect no output
+```
+
+pytest is not installed system-wide; `uv` is. Do not add a dev dependency to fix that.
 
 ### Constraints
 
@@ -267,21 +286,84 @@ Only after Gate 3: packaging, Pro module, pricing page, ship-check.
 
 ### Acceptance Criteria (spike)
 
-- [ ] Gate 1 demo: `numwatch init && numwatch run jenkins-cpu && numwatch page` produces a rendering `status.html`
-- [ ] Gate 2 demo: simulated breach fires exactly one Slack POST (mocked in tests, real once manually)
-- [ ] `numwatch.py` ≤ 200 lines at Gate 1 (state machine may push Gate 2 to ~300; note the count)
-- [ ] `python -m pytest` passes; `ruff check` clean
-- [ ] No secret appears in any committed file
+- [x] Gate 1 demo: `numwatch init && numwatch run example && numwatch page` produces a rendering `status.html` (2026-09-23)
+- [x] Gate 2 demo: simulated breach fires exactly one Slack POST, mocked (`test_sample_watch_breach_and_recovery_ping_exactly_once`)
+- [ ] Gate 2 demo, real: one manual breach + recovery ping to a test channel via `./test.sh` (needs `NUMWATCH_SLACK_WEBHOOK` exported; Emmanuel)
+- [x] Line count noted: 487 at Gate 2 (see Q4)
+- [x] `pytest` passes (27); `ruff check` clean (ruff 0.16.8, `ruff.toml` pins py311)
+- [x] No secret appears in any committed file
+
+### Gate 3 instructions (current phase)
+
+Agent can do without Emmanuel:
+
+1. Add `LICENSE` (MIT, copyright Emmanuel Joliet, 2026).
+2. Keep `numwatch.toml.example` as the dogfood template. Do not put real Jenkins/DuckDB commands in it if they reveal hostnames or paths that should not be public.
+3. Do not edit `numwatch.py` during the dogfood window except for bugs found by the dogfood. Every fix: failing test first, then fix, then entry in `implementation-notes.md`.
+4. During dogfood, when asked to "check numwatch": run `./numwatch.py status`, inspect `tick.log` tail, and `sqlite3 numwatch.db "select watch, count(*), max(ts) from samples group by watch"`. Report gaps > 2× `every` as missed samples.
+
+Needs Emmanuel:
+
+1. Real `cmd` for `jenkins-cpu` and `lightcurve-rows` in `numwatch.toml` (local file; `numwatch.toml` is committed today, so either keep commands non-sensitive or add it to `.gitignore` and rely on the example).
+2. `~/.config/numwatch/notify.toml` with the `jenkins-alerts` alias, `chmod 600`.
+3. Run `./test.sh` once for the real Slack ping (closes the remaining Gate 2 checkbox).
+4. Install cron and note the start date here:
+
+```
+* * * * * cd /Users/ejoliet/devspace/ejoliet/numwatch && ./numwatch.py tick >> tick.log 2>&1
+```
+
+Gate 3 dogfood start: `____-__-__` · planned end (7 days): `____-__-__`
+
+Gate 3 GO/NO-GO checklist (fill at retro):
+
+- [ ] Zero missed breaches (compare Slack history with `samples` table)
+- [ ] Zero duplicate pings (`last_fired_ts` transitions match Slack message count)
+- [ ] `status.html` mtime never older than 2 min while cron ran
+- [ ] `tick.log` free of tracebacks
+- [ ] Q3 decided; Q4 decided
+
+### Phase 4: packaging (only after Gate 3 GO)
+
+Constraints stay: zero-dep core, Python 3.11+, tests must pass unchanged in behaviour.
+
+1. Split `numwatch.py` into `src/numwatch/{cli,sources,rules,store,page}.py` plus `__init__.py`; keep one public surface per module (`run_shell`, `parse_rule`/`step_state`, `init_db`/`insert_sample`/..., `render_page`). No new abstractions; move code, do not redesign.
+2. `pyproject.toml`: name `numwatch`, `requires-python = ">=3.11"`, no runtime dependencies, console script `numwatch = numwatch.cli:main`, optional extra `pro = ["duckdb", "psycopg[binary]"]`. Build backend: hatchling or setuptools, whichever needs fewer lines.
+3. Move `ruff.toml` content into `[tool.ruff]`; delete `ruff.toml`.
+4. Update tests to import from the package; keep `tests/test_numwatch.py` as the single file until it exceeds ~400 lines.
+5. Verify `pipx install .` then `numwatch --help`, `numwatch init`, `numwatch tick` in an empty temp dir.
+6. Update `README.md` install section and the Repository Layout in this file.
+7. Delete root `numwatch.py` only after the console script is verified. Update the cron line.
+
+### Phase 5: Pro module (after Phase 4)
+
+Sells the rules engine and convenience, not raw capability (see OSS Core vs. Pro Split). Order by value:
+
+1. Rules: `stalls for T` (no change or no successful sample for duration T), `drops P% in T`, `rises P% in T`. Extend `parse_rule` and `rule_matches`; the alert state machine stays untouched. Unit tests for each rule against synthetic sample series.
+2. Sources: `url` (GET + dot/bracket `json_path`, stdlib only), `sql` (`driver = "duckdb" | "postgres"`, one row, one numeric column; import driver lazily and raise `ProFeatureError` with the `pip install numwatch[pro]` hint if missing).
+3. Notify: Discord, generic webhook, email (`smtplib`). Aliases resolved from `notify.toml` sections `[discord]`, `[webhook]`, `[email]`.
+4. License: Ed25519 offline check (`cryptography` is not stdlib; evaluate a pure-Python verifier vs. making it a Pro extra). Key file at `~/.config/numwatch/license.key`. Missing or invalid key: Pro features raise `ProFeatureError`; core keeps working. Lemon Squeezy issues the key.
+5. `pro/` lives inside the same package, gated by the license check. Do not cripple core.
+
+### Phase 6: ship
+
+1. Run `ship-check` skill: secrets scan, README quickstart works from a fresh clone, LICENSE present.
+2. Pricing page copy: one-time $39, what Pro adds, refund policy.
+3. Tag `v0.1.0`, publish to PyPI, announce.
 
 ---
 
 ## Next Steps
 
-1. [ ] Emmanuel answers Q1–Q2 (or accepts leans)
-2. [ ] Agent builds Gate 1; GO/NO-GO review
-3. [ ] Agent builds Gate 2; GO/NO-GO review
-4. [ ] Install cron on a real host; start Gate 3 dogfood clock (7 days)
-5. [ ] Gate 3 retro: decide Q3 (packaging), then Pro module + ship-check + Lemon Squeezy
+1. [x] Q1–Q2 resolved with leans (2026-09-23)
+2. [x] Gate 1 built and GO (2026-09-23)
+3. [x] Gate 2 built and GO (2026-09-23); real Slack ping via `./test.sh` still owed
+4. [ ] Commit the Gate 2 state (ruff fixes, `tests/` move, e2e test, `ruff.toml`, `.gitignore`, `implementation-notes.md`)
+5. [ ] Agent: add `LICENSE` (MIT)
+6. [ ] Emmanuel: real `cmd` for `jenkins-cpu` + `lightcurve-rows`, `notify.toml` alias, install cron, write the start date in the Gate 3 section
+7. [ ] 7-day dogfood; agent runs the "check numwatch" routine on request; bugs fixed test-first
+8. [ ] Gate 3 retro: fill checklist, decide Q3 + Q4, mark Gate 3 in the table
+9. [ ] Phase 4 packaging (agent), then Phase 5 Pro (agent), then Phase 6 ship (Emmanuel + `ship-check`)
 
 ---
 

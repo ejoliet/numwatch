@@ -1,0 +1,7 @@
+__pycache__/
+*.db
+status.html
+status.html.tmp
+tick.log
+.omc/
+.claude/
