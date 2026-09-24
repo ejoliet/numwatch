@@ -1,0 +1,23 @@
+[watch.mac-cpu]
+source   = "shell"
+cmd      = "top -l 1 | awk '/CPU usage/ {print $3}' | tr -d '%'"
+every    = "60s"
+alert_if = "> 50 for 2"
+notify   = "test"
+unit     = "%"
+
+[watch.mac-battery]
+source   = "shell"
+cmd      = "pmset -g batt | grep -Eo '[0-9]+%' | tr -d '%'"
+every    = "5m"
+alert_if = "< 20 for 1"
+notify   = "test"
+unit     = "%"
+
+[watch.random]
+source   = "shell"
+cmd      = "bash -c 'echo $((RANDOM % 100))'"
+every    = "10s"
+alert_if = "> 70 for 3"
+notify   = "test"
+unit     = ""

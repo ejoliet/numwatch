@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>numwatch — watch one number</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #EDF1EA;
+    --grid: rgba(90, 120, 95, 0.16);
+    --grid-major: rgba(90, 120, 95, 0.30);
+    --ink: #16324F;
+    --ink-soft: #4A6076;
+    --red: #C0392B;
+    --ok: #2E6B4F;
+    --card: #F6F8F4;
+    --line: rgba(22, 50, 79, 0.18);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--paper);
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      linear-gradient(var(--grid-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+    background-size: 12px 12px, 12px 12px, 60px 60px, 60px 60px;
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    padding: 20px 16px 48px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding-bottom: 10px; border-bottom: 2px solid var(--ink); margin-bottom: 22px;
+  }
+  .wordmark { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 18px; letter-spacing: -0.5px; }
+  .wordmark span { color: var(--red); }
+  .tagline { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--ink-soft); }
+
+  .watch-card {
+    background: var(--card);
+    border: 1.5px solid var(--ink);
+    box-shadow: 4px 4px 0 rgba(22,50,79,0.12);
+    padding: 18px 18px 0;
+    margin-bottom: 26px;
+  }
+  .watch-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+  .watch-name { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 500; color: var(--ink-soft); }
+  .watch-rule {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    border: 1px solid var(--line); padding: 3px 8px; color: var(--ink-soft); background: var(--paper);
+  }
+  .watch-rule b { color: var(--red); font-weight: 600; }
+
+  .readout { display: flex; align-items: baseline; gap: 14px; margin: 8px 0 4px; flex-wrap: wrap; }
+  .big {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 600;
+    font-size: clamp(56px, 16vw, 96px); line-height: 1;
+    font-variant-numeric: tabular-nums; letter-spacing: -3px;
+    transition: color 0.3s;
+  }
+  .big.breach { color: var(--red); }
+  .unit { font-family: 'IBM Plex Mono', monospace; font-size: 22px; color: var(--ink-soft); }
+  .delta { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .delta.up { color: var(--red); } .delta.down { color: var(--ok); }
+
+  .strip { position: relative; margin: 6px -18px 0; border-top: 1px solid var(--line); }
+  .strip svg { display: block; width: 100%; height: 140px; }
+  .trace { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; }
+  .trace-fill { fill: rgba(22,50,79,0.06); stroke: none; }
+  .threshold { stroke: var(--red); stroke-width: 1.5; stroke-dasharray: 6 4; }
+  .th-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: var(--red); }
+  .breach-dot { fill: var(--red); }
+
+  .stamp {
+    position: absolute; top: 10px; right: 14px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600;
+    color: var(--red); border: 1.5px solid var(--red);
+    padding: 4px 9px; background: rgba(246,248,244,0.92);
+    transform: rotate(2deg); opacity: 0; transition: opacity 0.25s;
+  }
+  .stamp.show { opacity: 1; }
+
+  .meta-row {
+    display: flex; justify-content: space-between; gap: 8px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--ink-soft);
+    padding: 6px 18px 8px; margin: 0 -18px; border-top: 1px solid var(--line);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--ink-soft); margin: 0 0 10px; font-weight: 500;
+  }
+  .row {
+    display: grid; grid-template-columns: minmax(0,1.3fr) 90px minmax(70px, 0.6fr) 20px;
+    align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line);
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .row .nm { font-family: 'IBM Plex Mono', monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row svg { width: 90px; height: 26px; display: block; }
+  .row .mini-trace { fill: none; stroke: var(--ink-soft); stroke-width: 1.5; }
+  .row .val { font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); justify-self: end; }
+  .dot.bad { background: var(--red); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: 0.3; } }
+
+  .config {
+    margin-top: 26px; background: #10263D; color: #D8E4EE;
+    font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.7;
+    padding: 16px 18px; overflow-x: auto; border: 1.5px solid var(--ink);
+  }
+  .config .c { color: #6E8AA3; } .config .k { color: #EBB55F; }
+  footer { margin-top: 18px; font-size: 11px; color: var(--ink-soft); text-align: center; }
+  @media (prefers-reduced-motion: reduce) { .dot.bad { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="wordmark">num<span>watch</span></div>
+    <div class="tagline">the anti-grafana</div>
+  </header>
+
+  <div class="watch-card">
+    <div class="watch-head">
+      <div class="watch-name">jenkins.big-executor.cpu</div>
+      <div class="watch-rule">alert if <b>&gt; 85</b> for 3 samples &rarr; #jenkins-cpu-alerts</div>
+    </div>
+    <div class="readout">
+      <div class="big" id="bigval">62.4</div>
+      <div class="unit">%</div>
+      <div class="delta" id="delta">+0.0</div>
+    </div>
+    <div class="strip">
+      <div class="stamp" id="stamp">PING &rarr; SLACK</div>
+      <svg id="chart" viewBox="0 0 760 140" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="meta-row">
+      <span>every 60s</span>
+      <span id="lastcheck">last check: now</span>
+      <span>source: shell</span>
+    </div>
+  </div>
+
+  <h2>Also watching</h2>
+  <div id="rows"></div>
+
+  <div class="config">
+<span class="c"># numwatch.toml — the whole product</span><br>
+[watch.jenkins-cpu]<br>
+<span class="k">cmd</span>       = "aws cloudwatch get-metric-statistics ... | jq .avg"<br>
+<span class="k">every</span>     = "60s"<br>
+<span class="k">alert_if</span>  = "&gt; 85 for 3"<br>
+<span class="k">notify</span>    = "slack://#jenkins-cpu-alerts"<br>
+<br>
+[watch.lightcurve-rows]<br>
+<span class="k">cmd</span>       = "duckdb lc.db -c 'select count(*) from lightcurves'"<br>
+<span class="k">every</span>     = "10m"<br>
+<span class="k">alert_if</span>  = "stalls for 1h"   <span class="c"># ingest stopped</span>
+  </div>
+
+  <footer>one number &middot; one sparkline &middot; one threshold &middot; one ping &middot; SQLite underneath</footer>
+</div>
+
+<script>
+(function () {
+  var N = 90, THRESH = 85, data = [];
+  var v = 62;
+  for (var i = 0; i < N; i++) { v = step(v, i); data.push(v); }
+  var breachStreak = 0, pinged = false, tick = 0;
+
+  function step(prev, t) {
+    var drift = Math.sin(t / 9) * 4 + (Math.random() - 0.5) * 6;
+    var spike = (Math.random() < 0.04) ? 20 + Math.random() * 12 : 0;
+    var nv = prev * 0.7 + (60 + drift + spike) * 0.3;
+    return Math.max(20, Math.min(98, nv));
+  }
+
+  var svg = document.getElementById('chart');
+  var W = 760, H = 140, PADT = 12, PADB = 10;
+  var MIN = 15, MAX = 100;
+  function y(val) { return PADT + (1 - (val - MIN) / (MAX - MIN)) * (H - PADT - PADB); }
+  function x(i) { return (i / (N - 1)) * W; }
+
+  function render() {
+    var pts = data.map(function (d, i) { return x(i).toFixed(1) + ',' + y(d).toFixed(1); }).join(' ');
+    var fillPts = '0,' + H + ' ' + pts + ' ' + W + ',' + H;
+    var ty = y(THRESH).toFixed(1);
+    var dots = '';
+    data.forEach(function (d, i) {
+      if (d > THRESH) dots += '<circle class="breach-dot" cx="' + x(i).toFixed(1) + '" cy="' + y(d).toFixed(1) + '" r="3"/>';
+    });
+    svg.innerHTML =
+      '<polygon class="trace-fill" points="' + fillPts + '"/>' +
+      '<line class="threshold" x1="0" y1="' + ty + '" x2="' + W + '" y2="' + ty + '"/>' +
+      '<text class="th-label" x="6" y="' + (ty - 5) + '">85 — threshold</text>' +
+      '<polyline class="trace" points="' + pts + '"/>' + dots;
+  }
+
+  var bigEl = document.getElementById('bigval'),
+      deltaEl = document.getElementById('delta'),
+      stampEl = document.getElementById('stamp'),
+      lastEl = document.getElementById('lastcheck');
+
+  function update() {
+    tick++;
+    var prev = data[data.length - 1];
+    var nv = step(prev, tick + N);
+    data.push(nv); data.shift();
+    render();
+
+    bigEl.textContent = nv.toFixed(1);
+    var d = nv - prev;
+    deltaEl.textContent = (d >= 0 ? '+' : '') + d.toFixed(1);
+    deltaEl.className = 'delta ' + (d >= 0 ? 'up' : 'down');
+
+    if (nv > THRESH) { breachStreak++; } else { breachStreak = 0; pinged = false; }
+    var breaching = breachStreak >= 3;
+    bigEl.classList.toggle('breach', nv > THRESH);
+    if (breaching && !pinged) { stampEl.classList.add('show'); pinged = true; }
+    if (!breaching) { stampEl.classList.remove('show'); }
+    lastEl.textContent = 'last check: ' + new Date().toLocaleTimeString();
+
+    updateRows();
+  }
+
+  // ---- secondary watches ----
+  var rows = [
+    { name: 'airflow.roman-l2.duration', unit: 'min', v: 42, jitter: 3, bad: false },
+    { name: 'lightcurves.rows', unit: 'M', v: 187.2, jitter: 0.4, grow: true, bad: false },
+    { name: 'popclass.sales.7d', unit: '', v: 6, jitter: 1, int: true, bad: false }
+  ];
+  rows.forEach(function (r) { r.hist = []; for (var i = 0; i < 30; i++) { rstep(r); } });
+  function rstep(r) {
+    if (r.grow) { r.v += Math.random() * r.jitter; }
+    else { r.v = Math.max(0, r.v + (Math.random() - 0.5) * r.jitter * 2); }
+    r.hist.push(r.v); if (r.hist.length > 30) r.hist.shift();
+  }
+  var rowsEl = document.getElementById('rows');
+  function updateRows() {
+    rows.forEach(rstep);
+    rows[0].bad = rows[0].v > 55;
+    rowsEl.innerHTML = rows.map(function (r) {
+      var lo = Math.min.apply(null, r.hist), hi = Math.max.apply(null, r.hist);
+      var span = (hi - lo) || 1;
+      var pts = r.hist.map(function (d, i) {
+        return ((i / 29) * 90).toFixed(1) + ',' + (23 - ((d - lo) / span) * 20).toFixed(1);
+      }).join(' ');
+      var val = r.int ? Math.round(r.v) : r.v.toFixed(1);
+      return '<div class="row">' +
+        '<div class="nm">' + r.name + '</div>' +
+        '<svg viewBox="0 0 90 26"><polyline class="mini-trace" points="' + pts + '"/></svg>' +
+        '<div class="val">' + val + (r.unit ? ' ' + r.unit : '') + '</div>' +
+        '<div class="dot' + (r.bad ? ' bad' : '') + '"></div>' +
+        '</div>';
+    }).join('');
+  }
+
+  render(); updateRows();
+  setInterval(update, 1500);
+})();
+</script>
+</body>
+</html>

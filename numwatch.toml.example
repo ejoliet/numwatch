@@ -1,0 +1,15 @@
+[watch.jenkins-cpu]
+source   = "shell"
+cmd      = "aws cloudwatch get-metric-statistics ... | jq -r .avg"
+every    = "60s"
+alert_if = "> 85 for 3"
+notify   = "jenkins-alerts"
+unit     = "%"
+
+[watch.lightcurve-rows]
+source   = "shell"
+cmd      = "duckdb lc.db -c 'select count(*) from lightcurves' -json | jq -r '.[0].c'"
+every    = "10m"
+alert_if = "> 999999999 for 1"
+# NOTE: "stalls for 1h" is a Pro rule (requires numwatch Pro). Core ships
+# threshold rules only; see numwatch-README.md for the tier split.
