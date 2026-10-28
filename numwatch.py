@@ -9,7 +9,9 @@ Stdlib only. See README.md (numwatch-README.md) for the full spec.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import math
 import os
 import re
 import sqlite3
@@ -128,9 +130,12 @@ def run_shell(cmd: str, timeout: int = 30) -> float:
         raise SourceError((proc.stderr or f"exit {proc.returncode}").strip()[:300])
     out = proc.stdout.strip()
     try:
-        return float(out)
+        value = float(out)
     except ValueError:
         raise SourceError(f"non-numeric output: {out[:100]!r}")
+    if not math.isfinite(value):
+        raise SourceError(f"non-finite output: {out[:100]!r}")
+    return value
 
 
 def _http_post_urllib(url: str, payload: bytes) -> None:
@@ -139,13 +144,16 @@ def _http_post_urllib(url: str, payload: bytes) -> None:
         resp.read()
 
 
-def notify(webhook_url: str, text: str, http_post: Callable[[str, bytes], None] = _http_post_urllib) -> None:
+def notify(webhook_url: str, text: str, http_post: Callable[[str, bytes], None] = _http_post_urllib) -> bool:
     # AIDEV-note: best-effort. A failed Slack POST must never crash a tick —
     # a missed ping is bad, a crashed cron job that stops sampling is worse.
+    # Returns False on failure so sample_watch can retry once next tick.
     try:
         http_post(webhook_url, json.dumps({"text": text}).encode())
+        return True
     except Exception as e:  # noqa: BLE001 - deliberately broad, see note above
         print(f"numwatch: notify failed: {e}", file=sys.stderr)
+        return False
 
 
 def resolve_webhook(alias: str | None, notify_map: dict) -> str | None:
@@ -217,7 +225,8 @@ CREATE TABLE IF NOT EXISTS alert_state (
     streak        INTEGER NOT NULL DEFAULT 0,
     error_state   TEXT NOT NULL DEFAULT 'ok',
     error_streak  INTEGER NOT NULL DEFAULT 0,
-    last_fired_ts INTEGER
+    last_fired_ts INTEGER,
+    unsent        TEXT
 );
 """
 
@@ -226,6 +235,8 @@ def init_db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
+    if "unsent" not in [r[1] for r in conn.execute("PRAGMA table_info(alert_state)")]:
+        conn.execute("ALTER TABLE alert_state ADD COLUMN unsent TEXT")
     conn.commit()
     return conn
 
@@ -302,9 +313,12 @@ def sample_watch(conn: sqlite3.Connection, w: Watch, notify_map: dict, now: int)
 
     state, streak, error_state, error_streak = get_alert_row(conn, w.name)
 
-    # Rule breach/recovery track
-    matched = rule_matches(w.rule, value)
-    state, streak, transition = step_state(state, streak, matched, w.rule.n)
+    # Rule breach/recovery track. AIDEV-note: a source error is not a
+    # measurement — it must neither clear a firing breach nor reset a streak.
+    if value is None:
+        transition = None
+    else:
+        state, streak, transition = step_state(state, streak, rule_matches(w.rule, value), w.rule.n)
 
     # Source-error track (Q1 lean: core pings on repeated source failure)
     error_state, error_streak, error_transition = step_state(
@@ -315,31 +329,51 @@ def sample_watch(conn: sqlite3.Connection, w: Watch, notify_map: dict, now: int)
     set_alert_row(conn, w.name, state, streak, error_state, error_streak, fired)
 
     webhook = resolve_webhook(w.notify_alias, notify_map)
-    if webhook and transition:
+    texts = []
+    if transition:
         verb = "BREACH" if transition == "breach" else "RECOVERED"
-        notify(webhook, f"numwatch: {w.name} {verb} — {value}{w.unit} ({w.rule.op} {w.rule.threshold} for {w.rule.n})")
-    if webhook and error_transition:
+        texts.append(f"numwatch: {w.name} {verb} — {value}{w.unit} ({w.rule.op} {w.rule.threshold} for {w.rule.n})")
+    if error_transition:
         verb = "FAILING" if error_transition == "breach" else "RECOVERED"
-        notify(webhook, f"numwatch: {w.name} source {verb}" + (f" — {error}" if error else ""))
+        texts.append(f"numwatch: {w.name} source {verb}" + (f" — {error}" if error else ""))
+    # AIDEV-note: one retry of last failed ping on the next tick (RDD "Notify
+    # error"); a newer transition supersedes it, never queued deeper than one.
+    unsent = conn.execute("SELECT unsent FROM alert_state WHERE watch=?", (w.name,)).fetchone()[0]
+    if unsent and not texts:
+        texts.append(unsent)
+    failed = None
+    for text in texts:
+        if webhook and not notify(webhook, text):
+            failed = text
+    conn.execute("UPDATE alert_state SET unsent=? WHERE watch=?", (failed, w.name))
+    conn.commit()
 
     prune(conn, w.name)
 
 
 def tick(config_path: Path, db_path: Path, notify_path: Path, page_path: Path, force: str | None = None) -> None:
-    watches = load_config(config_path)
-    notify_map = load_notify_map(notify_path)
-    conn = init_db(db_path)
-    now = int(__import__("time").time())
-    for name, w in watches.items():
-        if force is not None and name != force:
-            continue
-        if force is None:
-            last = last_sample_ts(conn, name)
-            if last is not None and now - last < w.every:
+    # AIDEV-note: whole-tick lock (sample + page render). Overlapping cron/manual
+    # ticks would read the same alert_state and double-ping; skipping is safer.
+    with open(str(db_path) + ".lock", "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("numwatch: another tick is running, skipping", file=sys.stderr)
+            return
+        watches = load_config(config_path)
+        notify_map = load_notify_map(notify_path)
+        conn = init_db(db_path)
+        now = int(__import__("time").time())
+        for name, w in watches.items():
+            if force is not None and name != force:
                 continue
-        sample_watch(conn, w, notify_map, now)
-    render_page(conn, watches, page_path)
-    conn.close()
+            if force is None:
+                last = last_sample_ts(conn, name)
+                if last is not None and now - last < w.every:
+                    continue
+            sample_watch(conn, w, notify_map, now)
+        render_page(conn, watches, page_path)
+        conn.close()
 
 
 # ------------------------------------------------------------------- page --

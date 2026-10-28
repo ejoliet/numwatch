@@ -46,7 +46,8 @@ pytest is not installed system-wide; use `uv`. Do not add a dev dependency to fi
 
 - `notify` is a module global looked up at call time: monkeypatch `numwatch.notify` in tests. `_http_post_urllib` is bound as a default arg at def time, patching it does nothing.
 - Error samples store `value = None`. `rule_matches` never matches `None`; only the source-error track (FAILING/RECOVERED after `ERROR_STREAK_THRESHOLD` consecutive errors) pings for a failing source.
-- `step_state` is the single dedup point for pings. Do not add a second one.
+- `step_state` is the single dedup point for pings. Do not add a second one. A source error (`value=None`) skips the rule track entirely.
+- `tick` holds `flock` on `<db>.lock` for its whole run; a second tick exits 0 with "another tick is running". `alert_state.unsent` holds at most one failed ping text, resent once next tick.
 - Paths are cwd-relative by default; override with `NUMWATCH_CONFIG`, `NUMWATCH_DB`, `NUMWATCH_NOTIFY`, `NUMWATCH_PAGE`.
 - "Check numwatch" during dogfood means: `./numwatch.py status`, tail `tick.log`, and `sqlite3 numwatch.db "select watch, count(*), max(ts) from samples group by watch"`. Report gaps > 2× `every` as missed samples.
 

@@ -1,12 +1,12 @@
 # numwatch
 
->Watch exactly one number — from a shell command, URL, or SQL query — over time. Sparkline, threshold, Slack ping. The anti-Grafana.
+>Watch exactly one number — the numeric output of a shell command — over time. Sparkline, threshold, Slack ping. The anti-Grafana. (URL and SQL sources are planned for the Pro tier; the core CLI accepts `source = "shell"` only.)
 
-**Problem**: 90% of monitoring needs are "watch this one number and tell me when it's weird." The available answers are either a full observability stack (Prometheus/Grafana, VictoriaMetrics, Splunk) or nothing (cron + curl + if). Host monitors (Beszel, Netdata) watch fixed system metrics only. changedetection.io extracts numbers from URLs but cannot run a shell command or hit a database.
+**Problem**: Our thesis: most monitoring needs reduce to "watch this one number and tell me when it's weird." The available answers are either a full observability stack (Prometheus/Grafana, VictoriaMetrics, Splunk) or nothing (cron + curl + if). Host monitors (Beszel, Netdata) can be extended with custom collectors, but that means learning a plugin API and running an agent. changedetection.io extracts numbers from URLs but cannot run a shell command or hit a database. numwatch's edge is not uniqueness, it is size: one file, one config, one DB, no daemon.
 
-**Solution**: A cron-invoked Python CLI. Config is one TOML file. State is one SQLite file. Output is one static HTML status page (strip-chart aesthetic, see numwatch-preview.html) plus Slack pings on threshold breach and recovery.
+**Solution**: A cron-invoked Python CLI. Config is one TOML file. State is one SQLite file. Output is one static HTML status page (strip-chart aesthetic, see numwatch-preview.html) plus Slack pings on threshold breach and recovery. A failed ping is retried once on the next tick; overlapping ticks are skipped via a lock file; a source error (timeout, non-zero exit, non-numeric or non-finite output) never clears a firing breach.
 
-**Status**: Gates 1–2 passed (2026-09-23). Gate 3 dogfood next. Full spec, gate table, and agent instructions live in [RDD.md](RDD.md).
+**Status**: Gates 1–3 passed (Gate 3 via 5-minute local dogfood, 2026-09-24). Gate 3b, a 7-day run against real targets, is in progress and not yet verified. Phase 4 (packaging) is next. Full spec, gate table, and agent instructions live in [RDD.md](RDD.md).
 
 ## Quickstart
 

@@ -149,7 +149,7 @@ def test_sample_watch_breach_and_recovery_ping_exactly_once(monkeypatch, tmp_pat
     import numwatch
 
     posts: list[str] = []
-    monkeypatch.setattr(numwatch, "notify", lambda url, text: posts.append(text))
+    monkeypatch.setattr(numwatch, "notify", lambda url, text: posts.append(text) or True)
     monkeypatch.setenv("NUMWATCH_SLACK_WEBHOOK", "https://hooks.slack.com/fake")
     values = iter([90, 90, 90, 90, 90, 10, 10])
     monkeypatch.setattr(numwatch, "run_shell", lambda cmd, timeout=30: float(next(values)))
@@ -161,3 +161,82 @@ def test_sample_watch_breach_and_recovery_ping_exactly_once(monkeypatch, tmp_pat
 
     assert len(posts) == 2
     assert "BREACH" in posts[0] and "RECOVERED" in posts[1]
+
+
+def _watch(rule: str) -> "numwatch.Watch":  # noqa: F821
+    import numwatch
+    return numwatch.Watch("w", "shell", "x", 1, numwatch.parse_rule(rule), None, "")
+
+
+def test_source_error_does_not_clear_firing_rule(monkeypatch, tmp_path):
+    import numwatch
+
+    posts: list[str] = []
+    monkeypatch.setattr(numwatch, "notify", lambda url, text: posts.append(text) or True)
+    monkeypatch.setenv("NUMWATCH_SLACK_WEBHOOK", "https://hooks.slack.com/fake")
+    outs = iter([90.0, None, 90.0, 10.0])
+
+    def fake_shell(cmd, timeout=30):
+        v = next(outs)
+        if v is None:
+            raise numwatch.SourceError("boom")
+        return v
+
+    monkeypatch.setattr(numwatch, "run_shell", fake_shell)
+    conn = numwatch.init_db(tmp_path / "t.db")
+    for ts in range(4):
+        numwatch.sample_watch(conn, _watch("> 85 for 1"), {}, ts)
+    assert posts == [p for p in posts if "source" not in p]
+    assert [p.split()[2] for p in posts] == ["BREACH", "RECOVERED"]
+
+
+@pytest.mark.parametrize("out", ["nan", "inf", "-inf"])
+def test_run_shell_rejects_nonfinite(out):
+    from numwatch import SourceError, run_shell
+    with pytest.raises(SourceError):
+        run_shell(f"echo {out}")
+
+
+def test_failed_ping_is_retried_once_next_tick(monkeypatch, tmp_path):
+    import numwatch
+
+    results = iter([False, True])
+    posts: list[str] = []
+
+    def flaky(url, text):
+        posts.append(text)
+        return next(results)
+
+    monkeypatch.setattr(numwatch, "notify", flaky)
+    monkeypatch.setenv("NUMWATCH_SLACK_WEBHOOK", "https://hooks.slack.com/fake")
+    monkeypatch.setattr(numwatch, "run_shell", lambda cmd, timeout=30: 90.0)
+    conn = numwatch.init_db(tmp_path / "t.db")
+    for ts in range(3):
+        numwatch.sample_watch(conn, _watch("> 85 for 1"), {}, ts)
+    # tick0: breach, send fails; tick1: resend same text, succeeds; tick2: nothing
+    assert len(posts) == 2 and posts[0] == posts[1] and "BREACH" in posts[0]
+
+
+def test_notify_returns_delivery_status(monkeypatch):
+    from numwatch import notify
+
+    def boom(url, payload):
+        raise OSError("down")
+
+    assert notify("u", "t", http_post=lambda u, p: None) is True
+    assert notify("u", "t", http_post=boom) is False
+
+
+def test_tick_skips_when_lock_held(tmp_path, monkeypatch, capsys):
+    import fcntl
+
+    import numwatch
+
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[watch.w]\nsource = "shell"\ncmd = "echo 1"\nevery = "1m"\nrule = "> 5 for 1"\n')
+    db = tmp_path / "t.db"
+    with open(str(db) + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        numwatch.tick(cfg, db, tmp_path / "none.toml", tmp_path / "s.html")
+    assert "another tick is running" in capsys.readouterr().err
+    assert not (tmp_path / "s.html").exists()

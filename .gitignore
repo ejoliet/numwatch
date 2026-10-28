@@ -6,3 +6,4 @@ tick.log
 .omc/
 .claude/
 examples/.dogfood/
+*.db.lock

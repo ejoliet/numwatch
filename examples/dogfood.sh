@@ -140,7 +140,8 @@ conn = sqlite3.connect(db)
 for (watch,) in conn.execute("SELECT DISTINCT watch FROM samples"):
     ts_list = [r[0] for r in conn.execute("SELECT ts FROM samples WHERE watch=? ORDER BY ts", (watch,))]
     gaps = sum(1 for a, b in zip(ts_list, ts_list[1:]) if b - a > 2 * every)
-    print(f"{watch}: missed_gaps={gaps}")
+    check(f"{watch}: missed_gaps={gaps} samples={len(ts_list)} (expect >= {duration // every - 1})",
+          gaps == 0 and len(ts_list) >= duration // every - 1)
 
 pings = []
 if os.path.exists(pings_path):
@@ -195,7 +196,7 @@ if os.path.exists(ticklog):
     print("\n".join(content.splitlines()[-20:]))
 check("tick.log has 0 Tracebacks", tb_count == 0)
 
-print(f"\ntick failures (nonzero exit during loop): {tick_fail}")
+check(f"tick failures (nonzero exit during loop) == 0 (was {tick_fail})", tick_fail == 0)
 check(f"max status.html lag < 120s (was {max_lag}s)", max_lag < 120)
 
 print()

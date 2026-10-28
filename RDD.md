@@ -205,9 +205,9 @@ Retention: keep newest 10,000 samples per watch (configurable later); prune insi
 | Error | When | Behavior |
 |-------|------|----------|
 | `ConfigError` | Bad TOML, unknown rule grammar | Exit 1, message to stderr; `tick` refuses to run |
-| Source error | Timeout, non-zero exit, non-float output | Record error sample (value NULL); 3 consecutive → error ping (once) |
+| Source error | Timeout, non-zero exit, non-float or non-finite output | Record error sample (value NULL); 3 consecutive → error ping (once) |
 | Notify error | Webhook POST fails | Log to stderr, retry once next tick while transition unsent; never crash the tick |
-| DB locked | Concurrent tick overlap | `BEGIN IMMEDIATE` + busy_timeout 5s; skip watch if still locked |
+| Tick overlap | Concurrent tick (slow cron, manual run) | Non-blocking `flock` on `<db>.lock` for the whole tick; second tick logs "another tick is running" and exits 0. busy_timeout 5s on the DB as backstop |
 
 ---
 
